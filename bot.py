@@ -53,7 +53,7 @@ def process_issue(issue):
     issue_url = issue['html_url']
     
     # --- THIS IS THE FIXED LINE ---
-    repo_full_name = issue['repository_url'].replace('https://api.github.com/repos/', '')
+    repo_full_name = issue['repository_url'].replace('https://api.github.com/', '')
     
     repo_url = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{repo_full_name}.git"
     
@@ -189,7 +189,7 @@ def process_issue(issue):
         'head': branch_name,
         'base': 'main' # Or 'master', we can try to detect this later
     }
-    pr_url = f"https://api.github.com/repos/{repo_full_name}/pulls"
+    pr_url = f"https://api.github.com/{repo_full_name}/pulls"
     
     pr_response = requests.post(pr_url, headers=pr_headers, json=pr_data)
 

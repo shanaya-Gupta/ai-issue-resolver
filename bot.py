@@ -5,6 +5,7 @@ import shutil
 import time
 import google.generativeai as genai
 import re
+import unicodedata # <-- NEW: For robust character cleaning
 
 # --- CONFIGURATION ---
 GITHUB_TOKEN = os.getenv('GH_PAT')
@@ -89,26 +90,41 @@ def process_issue(issue):
         response = model.generate_content(prompt)
         raw_response = response.text
         
-        print("--- RAW GEMINI OUTPUT ---")
+        # --- NEW: Ultra-robust cleaning of the raw response ---
+        # 1. Ensure UTF-8 and remove invalid characters
+        raw_response = str(raw_response).encode('utf-8', 'ignore').decode('utf-8')
+        # 2. Normalize line endings (again, for good measure)
+        raw_response = raw_response.replace('\r\n', '\n').replace('\r', '\n')
+        # 3. Remove any other non-printable ASCII characters, except for newline and space
+        raw_response = ''.join(char for char in raw_response if unicodedata.category(char) != 'Cc' or char in ['\n', ' '])
+
+        print("--- RAW GEMINI OUTPUT (CLEANED) ---")
         print(raw_response)
         print("--- END RAW GEMINI OUTPUT ---")
 
         # Use regex to find the content inside ```diff ... ```
         patch = ""
-        match = re.search(r"```diff\n(.*?)```", raw_response, re.DOTALL)
+        match = re.search(r"```diff\s*\n(.*?)```", raw_response, re.DOTALL)
         if match:
             patch = match.group(1).strip()
-            # --- THE FINAL FIX: Normalize line endings to fix 'corrupt patch' error ---
-            patch = patch.replace('\r\n', '\n').replace('\r', '\n')
         else:
-            if raw_response.strip().startswith('---'):
+            # Fallback for cases where Gemini doesn't use the diff block
+            if raw_response.strip().startswith('--- '):
                  patch = raw_response.strip()
-                 patch = patch.replace('\r\n', '\n').replace('\r', '\n')
+            else:
+                 print("Warning: Gemini response did not contain a ```diff block or a raw diff header.")
+                 print("Attempting to use the entire raw response as patch (less reliable).")
+                 patch = raw_response.strip()
 
         if not patch:
             print("Gemini did not return a patch or it could not be extracted. Aborting.")
             shutil.rmtree(temp_dir)
             return
+
+        # NEW: Print the final cleaned patch to verify before applying
+        print("\n--- CLEANED PATCH TO BE APPLIED ---")
+        print(patch)
+        print("--- END CLEANED PATCH ---")
 
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
@@ -121,7 +137,8 @@ def process_issue(issue):
     with open(patch_file, 'w', newline='\n') as f: # Ensure unix line endings on write
         f.write(patch)
     
-    result = subprocess.run(['git', 'apply', 'fix.patch'], cwd=temp_dir, capture_output=True, text=True)
+    # Git apply verbose, for more specific error messages if it fails again
+    result = subprocess.run(['git', 'apply', '--verbose', 'fix.patch'], cwd=temp_dir, capture_output=True, text=True)
     
     if result.returncode != 0:
         print(f"Failed to apply patch: {result.stderr}")

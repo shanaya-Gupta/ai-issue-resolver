@@ -3,7 +3,7 @@ name: AI Issue Resolver Bot
 on:
   workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
   schedule:
-    - cron: '0 */2 * * *' # Runs automatically every 2 hours
+    - cron: '*/15 * * * *' # Runs automatically every 2 hours
 
 jobs:
   run-bot:

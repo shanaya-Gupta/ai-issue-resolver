@@ -4,6 +4,7 @@ import subprocess
 import shutil
 import time
 import google.generativeai as genai
+import re # <-- NEW: Import the regular expression library
 
 # --- CONFIGURATION ---
 GITHUB_TOKEN = os.getenv('GH_PAT')
@@ -87,23 +88,21 @@ def process_issue(issue):
         response = model.generate_content(prompt)
         raw_response = response.text
         
-        # --- NEW: Print the raw patch for debugging ---
         print("--- RAW GEMINI OUTPUT ---")
         print(raw_response)
         print("--- END RAW GEMINI OUTPUT ---")
 
-        # --- NEW: More robust patch cleaning ---
+        # --- NEW: More robust patch cleaning using regular expressions ---
         patch = ""
-        if "```diff" in raw_response:
-            # Extract content between ```diff and ```
-            patch_parts = raw_response.split("```diff")
-            if len(patch_parts) > 1:
-                patch = patch_parts[1].split("```")[0]
+        # Use regex to find the content inside ```diff ... ```
+        match = re.search(r"```diff\n(.*?)```", raw_response, re.DOTALL)
+        if match:
+            patch = match.group(1).strip()
         else:
-             # Fallback if the diff block isn't found, assume the whole response is the patch
-            patch = raw_response
-        
-        patch = patch.strip()
+            # Fallback for cases where Gemini doesn't use the diff block
+            # This is less reliable but better than nothing
+            if raw_response.strip().startswith('---'):
+                 patch = raw_response.strip()
 
         if not patch:
             print("Gemini did not return a patch or it could not be extracted. Aborting.")

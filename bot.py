@@ -20,7 +20,7 @@ SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
 
 # --- Configure the Gemini AI Model ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-pro-latest')
+model = genai.GenerativeModel('gemini-2.5-pro')
 
 # --- HELPER FUNCTIONS ---
 
@@ -51,7 +51,10 @@ def find_github_issues():
 def process_issue(issue):
     """Clones the repo, analyzes the code, generates a fix, and creates a PR."""
     issue_url = issue['html_url']
-    repo_full_name = issue['repository_url'].split('github.com/')[1]
+    
+    # --- THIS IS THE FIXED LINE ---
+    repo_full_name = issue['repository_url'].replace('https://api.github.com/repos/', '')
+    
     repo_url = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{repo_full_name}.git"
     
     # Create a temporary directory to clone the repo

@@ -12,7 +12,7 @@ GITHUB_TOKEN = os.getenv('GH_PAT')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Your GitHub username. The bot will commit and create PRs as you.
-GITHUB_USERNAME = "YOUR_GITHUB_USERNAME" # <--- IMPORTANT: CHANGE THIS
+GITHUB_USERNAME = "shanaya-Gupta" # <--- IMPORTANT: CHANGE THIS
 
 # What kind of issues are we looking for?
 # You can change the language and labels.

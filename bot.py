@@ -9,7 +9,7 @@ import re
 # --- CONFIGURATION ---
 GITHUB_TOKEN = os.getenv('GH_PAT')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GITHUB_USERNAME = "shanaya-Gupta" # <--- IMPORTANT: CHANGE THIS
+GITHUB_USERNAME = "shanaya-Gupta" # <--- I've set this for you, but double-check!
 SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
 
 # --- Configure the Gemini AI Model ---
@@ -40,14 +40,14 @@ def fork_repository(repo_full_name, headers):
     response = requests.post(fork_url, headers=headers)
     if response.status_code in [200, 201, 202]:
         print("Fork request sent or fork already exists.")
-        time.sleep(15) # Give GitHub time to complete the fork
+        time.sleep(15)
         return True
     else:
         print(f"Failed to fork repository: {response.status_code} - {response.text}")
         return False
 
 def process_issue(issue):
-    """Forks, clones, fixes, and creates a PR for an issue."""
+    """Forks, clones, fixes, and creates a PR for an issue using the full-file replacement strategy."""
     issue_url = issue['html_url']
     original_repo_full_name = issue['repository_url'].replace('https://api.github.com/repos/', '')
     repo_owner, repo_name = original_repo_full_name.split('/')
@@ -59,35 +59,23 @@ def process_issue(issue):
 
     forked_repo_full_name = f"{GITHUB_USERNAME}/{repo_name}"
     forked_repo_url_with_auth = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{forked_repo_full_name}.git"
-
     temp_dir = f"temp_repo_{int(time.time())}"
-    print(f"Processing issue: {issue_url} in our fork {forked_repo_full_name}")
-
+    
     print(f"Cloning our fork: {forked_repo_full_name}...")
     try:
         subprocess.run(['git', 'clone', f"https://github.com/{forked_repo_full_name}.git", temp_dir], check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to clone our fork: {e.stderr}")
-        return
         
-    # --- NEW: Sync the fork with the original repository to get the latest changes ---
-    try:
         print("Syncing fork with the original repository...")
         original_repo_url = f"https://github.com/{original_repo_full_name}.git"
         subprocess.run(['git', 'remote', 'add', 'upstream', original_repo_url], cwd=temp_dir, check=True)
         subprocess.run(['git', 'fetch', 'upstream'], cwd=temp_dir, check=True)
-        
-        # Get the default branch name of the fork
         default_branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=temp_dir, text=True).strip()
-        
-        # Merge changes from the original repo's default branch
-        subprocess.run(['git', 'merge', f'upstream/{default_branch}'], cwd=temp_dir, check=True, capture_output=True, text=True)
+        subprocess.run(['git', 'merge', f'upstream/{default_branch}'], cwd=temp_dir, check=True)
         print("Fork is now up-to-date.")
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to sync fork: {e.stderr}")
+    except (subprocess.CalledProcessError, subprocess.SubprocessError) as e:
+        print(f"Failed during git setup: {e}")
         shutil.rmtree(temp_dir)
         return
-    # ---------------------------------------------------------------------------------
 
     print("Reading files for context...")
     context = ""
@@ -100,38 +88,68 @@ def process_issue(issue):
                         context += f"\n--- FILE: {os.path.relpath(os.path.join(root, file), temp_dir)} ---\n" + f.read()
                 except Exception: pass
 
-    print("Asking Gemini for a fix...")
-    prompt = f"Fix this GitHub issue.\n\nISSUE: {issue['title']}\nDESCRIPTION: {issue['body']}\n\nCODEBASE:\n{context[:500000]}\n\nINSTRUCTIONS:\nProvide ONLY a unified diff patch inside a ```diff code block."
+    print("Asking Gemini to rewrite the file...")
+    prompt = f"""
+    You are an expert AI programmer. Your task is to fix a GitHub issue by rewriting a single file.
+
+    ISSUE: {issue['title']}
+    DESCRIPTION: {issue['body']}
+
+    CODEBASE CONTEXT:
+    {context[:500000]}
+
+    INSTRUCTIONS:
+    1.  Identify the single file that needs to be modified to fix the issue.
+    2.  Provide the full, complete content of this file with the fix applied.
+    3.  Your response MUST be in the following format, and nothing else:
+
+    FILE_PATH: [path/to/your/file.py]
+
+    ```python
+    # Full content of the fixed file goes here
+    # ...
+    ```
+    """
 
     try:
         response = model.generate_content(prompt)
         raw_response = response.text
-        match = re.search(r"```diff\n(.*?)```", raw_response, re.DOTALL)
-        if match:
-            patch = match.group(1).strip().replace('\r\n', '\n').replace('\r', '\n')
-            if not patch.endswith('\n'): patch += '\n'
-        else:
-            print("Could not find ```diff block in Gemini response.")
+
+        # --- NEW: Parse the file path and the new code content ---
+        match = re.search(r"FILE_PATH: (.*?)\n\n```(?:\w+)?\n(.*)```", raw_response, re.DOTALL)
+        if not match:
+            print("Could not parse Gemini's response. The format was incorrect.")
+            print("--- RAW GEMINI OUTPUT ---")
+            print(raw_response[:500])
+            print("-------------------------")
             shutil.rmtree(temp_dir)
             return
+
+        file_to_change = match.group(1).strip()
+        new_code_content = match.group(2).strip()
+
     except Exception as e:
         print(f"Error from Gemini: {e}")
         shutil.rmtree(temp_dir)
         return
 
-    print("Applying patch...")
-    patch_file = os.path.join(temp_dir, 'fix.patch')
-    with open(patch_file, 'w', newline='\n') as f: f.write(patch)
-    
-    result = subprocess.run(['git', 'apply', '--ignore-space-change', '--ignore-whitespace', 'fix.patch'], cwd=temp_dir, capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        print(f"Failed to apply patch. Git output:\n{result.stderr}")
+    # --- NEW: Overwrite the file with the new content ---
+    print(f"Applying fix by overwriting file: {file_to_change}")
+    full_path_to_file = os.path.join(temp_dir, file_to_change)
+
+    if not os.path.exists(os.path.dirname(full_path_to_file)):
+        os.makedirs(os.path.dirname(full_path_to_file))
+        
+    try:
+        with open(full_path_to_file, 'w', encoding='utf-8') as f:
+            f.write(new_code_content)
+        print("File overwritten successfully.")
+    except FileNotFoundError:
+        print(f"Error: Gemini specified a file path that does not exist: {file_to_change}")
         shutil.rmtree(temp_dir)
         return
-        
-    print("Patch applied successfully!")
 
+    # --- The rest is the same: commit, push, and PR ---
     new_branch = f"fix/ai-{issue['number']}"
     print(f"Pushing to our fork's branch: {new_branch}")
     
@@ -142,12 +160,12 @@ def process_issue(issue):
         subprocess.run(['git', 'add', '.'], cwd=temp_dir, check=True)
         status = subprocess.run(['git', 'status', '--porcelain'], cwd=temp_dir, capture_output=True, text=True)
         if not status.stdout.strip():
-            print("Patch resulted in no changes. Aborting.")
+            print("AI rewrite resulted in no changes. Aborting.")
             shutil.rmtree(temp_dir)
             return
         subprocess.run(['git', 'commit', '-m', f"fix: Resolve issue #{issue['number']}"], cwd=temp_dir, check=True)
         subprocess.run(['git', 'remote', 'set-url', 'origin', forked_repo_url_with_auth], cwd=temp_dir, check=True)
-        subprocess.run(['git', 'push', '-u', 'origin', new_branch], cwd=temp_dir, check=True)
+        subprocess.run(['git', 'push', '-u', 'origin', new_branch, '--force'], cwd=temp_dir, check=True)
         print("Code pushed to our fork on GitHub.")
     except subprocess.CalledProcessError as e:
         print(f"Git command failed: {e.cmd}\nStderr: {e.stderr}")

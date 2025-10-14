@@ -16,7 +16,7 @@ PROCESSED_ISSUES_FILE = "processed_issues.txt"
 # --- Configure the Gemini AI Model ---
 # We need the smartest model to get high-quality code. Our new parser can handle its chattiness.
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-pro')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- HELPER FUNCTIONS ---
 

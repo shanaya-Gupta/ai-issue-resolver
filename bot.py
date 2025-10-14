@@ -38,12 +38,9 @@ def fork_repository(repo_full_name, headers):
     print(f"Forking {repo_full_name}...")
     fork_url = f"https://api.github.com/repos/{repo_full_name}/forks"
     response = requests.post(fork_url, headers=headers)
-    
-    # 202 means fork is in progress; 200 or 201 means it's done or already exists
     if response.status_code in [200, 201, 202]:
-        print("Fork created or already exists.")
-        # Give GitHub a moment to complete the fork operation
-        time.sleep(10) 
+        print("Fork request sent or fork already exists.")
+        time.sleep(15) # Give GitHub time to complete the fork
         return True
     else:
         print(f"Failed to fork repository: {response.status_code} - {response.text}")
@@ -57,26 +54,41 @@ def process_issue(issue):
     
     headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
     
-    # --- STEP 1: FORK THE REPOSITORY ---
     if not fork_repository(original_repo_full_name, headers):
         return
 
-    # Now we work with OUR fork
     forked_repo_full_name = f"{GITHUB_USERNAME}/{repo_name}"
     forked_repo_url_with_auth = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{forked_repo_full_name}.git"
 
     temp_dir = f"temp_repo_{int(time.time())}"
     print(f"Processing issue: {issue_url} in our fork {forked_repo_full_name}")
 
-    # --- STEP 2: CLONE OUR FORK ---
     print(f"Cloning our fork: {forked_repo_full_name}...")
     try:
-        subprocess.run(['git', 'clone', '--depth', '1', f"https://github.com/{forked_repo_full_name}.git", temp_dir], check=True, capture_output=True, text=True)
+        subprocess.run(['git', 'clone', f"https://github.com/{forked_repo_full_name}.git", temp_dir], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         print(f"Failed to clone our fork: {e.stderr}")
         return
+        
+    # --- NEW: Sync the fork with the original repository to get the latest changes ---
+    try:
+        print("Syncing fork with the original repository...")
+        original_repo_url = f"https://github.com/{original_repo_full_name}.git"
+        subprocess.run(['git', 'remote', 'add', 'upstream', original_repo_url], cwd=temp_dir, check=True)
+        subprocess.run(['git', 'fetch', 'upstream'], cwd=temp_dir, check=True)
+        
+        # Get the default branch name of the fork
+        default_branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=temp_dir, text=True).strip()
+        
+        # Merge changes from the original repo's default branch
+        subprocess.run(['git', 'merge', f'upstream/{default_branch}'], cwd=temp_dir, check=True, capture_output=True, text=True)
+        print("Fork is now up-to-date.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to sync fork: {e.stderr}")
+        shutil.rmtree(temp_dir)
+        return
+    # ---------------------------------------------------------------------------------
 
-    # The rest of the logic is the same...
     print("Reading files for context...")
     context = ""
     for root, _, files in os.walk(temp_dir):
@@ -120,7 +132,6 @@ def process_issue(issue):
         
     print("Patch applied successfully!")
 
-    # --- STEP 3: PUSH TO OUR FORK ---
     new_branch = f"fix/ai-{issue['number']}"
     print(f"Pushing to our fork's branch: {new_branch}")
     
@@ -135,7 +146,6 @@ def process_issue(issue):
             shutil.rmtree(temp_dir)
             return
         subprocess.run(['git', 'commit', '-m', f"fix: Resolve issue #{issue['number']}"], cwd=temp_dir, check=True)
-        # We need to set the remote URL to our fork with authentication
         subprocess.run(['git', 'remote', 'set-url', 'origin', forked_repo_url_with_auth], cwd=temp_dir, check=True)
         subprocess.run(['git', 'push', '-u', 'origin', new_branch], cwd=temp_dir, check=True)
         print("Code pushed to our fork on GitHub.")
@@ -144,18 +154,11 @@ def process_issue(issue):
         shutil.rmtree(temp_dir)
         return
 
-    # --- STEP 4: CREATE PULL REQUEST ---
     print("Creating Pull Request...")
     repo_info = requests.get(f"https://api.github.com/repos/{original_repo_full_name}", headers=headers).json()
     base_branch = repo_info.get('default_branch', 'main')
 
-    pr_data = {
-        'title': f"AI Fix for: {issue['title']}",
-        'body': f"This is an AI-generated pull request that attempts to resolve issue #{issue['number']}.",
-        'head': f"{GITHUB_USERNAME}:{new_branch}", # Your branch
-        'base': base_branch                      # The original repo's branch
-    }
-    
+    pr_data = { 'title': f"AI Fix for: {issue['title']}", 'body': f"Resolves #{issue['number']}.", 'head': f"{GITHUB_USERNAME}:{new_branch}", 'base': base_branch }
     pr_url = f"https://api.github.com/repos/{original_repo_full_name}/pulls"
     pr_response = requests.post(pr_url, headers=headers, json=pr_data)
 

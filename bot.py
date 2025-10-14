@@ -4,7 +4,7 @@ import subprocess
 import shutil
 import time
 import google.generativeai as genai
-import re # <-- NEW: Import the regular expression library
+import re
 
 # --- CONFIGURATION ---
 GITHUB_TOKEN = os.getenv('GH_PAT')
@@ -14,7 +14,8 @@ SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
 
 # --- Configure the Gemini AI Model ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+# Using Flash model as it's faster and has a generous rate limit
+model = genai.GenerativeModel('gemini-2.0-flash') 
 
 # --- HELPER FUNCTIONS ---
 
@@ -92,17 +93,17 @@ def process_issue(issue):
         print(raw_response)
         print("--- END RAW GEMINI OUTPUT ---")
 
-        # --- NEW: More robust patch cleaning using regular expressions ---
-        patch = ""
         # Use regex to find the content inside ```diff ... ```
+        patch = ""
         match = re.search(r"```diff\n(.*?)```", raw_response, re.DOTALL)
         if match:
             patch = match.group(1).strip()
+            # --- THE FINAL FIX: Normalize line endings to fix 'corrupt patch' error ---
+            patch = patch.replace('\r\n', '\n').replace('\r', '\n')
         else:
-            # Fallback for cases where Gemini doesn't use the diff block
-            # This is less reliable but better than nothing
             if raw_response.strip().startswith('---'):
                  patch = raw_response.strip()
+                 patch = patch.replace('\r\n', '\n').replace('\r', '\n')
 
         if not patch:
             print("Gemini did not return a patch or it could not be extracted. Aborting.")
@@ -117,7 +118,7 @@ def process_issue(issue):
     # 4. Apply the patch
     print("Applying patch...")
     patch_file = os.path.join(temp_dir, 'fix.patch')
-    with open(patch_file, 'w') as f:
+    with open(patch_file, 'w', newline='\n') as f: # Ensure unix line endings on write
         f.write(patch)
     
     result = subprocess.run(['git', 'apply', 'fix.patch'], cwd=temp_dir, capture_output=True, text=True)

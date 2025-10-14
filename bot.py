@@ -14,7 +14,7 @@ SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
 
 # --- Configure the Gemini AI Model ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-pro')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 # --- HELPER FUNCTIONS ---
 

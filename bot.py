@@ -11,10 +11,8 @@ GITHUB_TOKEN = os.getenv('GH_PAT')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GITHUB_USERNAME = "shanaya-Gupta" # I've set this for you, but double-check!
 SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
-PROCESSED_ISSUES_FILE = "processed_issues.txt"
 
 # --- Configure the Gemini AI Model ---
-# We need the smartest model to get high-quality code. Our new parser can handle its chattiness.
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
@@ -22,14 +20,14 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 
 def get_processed_issues():
     """Reads the list of processed issue URLs from the memory file."""
-    if not os.path.exists(PROCESSED_ISSUES_FILE):
+    if not os.path.exists("processed_issues.txt"):
         return set()
-    with open(PROCESSED_ISSUES_FILE, 'r') as f:
+    with open("processed_issues.txt", 'r') as f:
         return set(line.strip() for line in f)
 
 def add_issue_to_processed(issue_url):
     """Adds a new issue URL to the memory file."""
-    with open(PROCESSED_ISSUES_FILE, 'a') as f:
+    with open("processed_issues.txt", 'a') as f:
         f.write(issue_url + '\n')
 
 def find_github_issues():
@@ -62,7 +60,7 @@ def fork_repository(repo_full_name, headers):
     response = requests.post(fork_url, headers=headers)
     if response.status_code in [200, 201, 202]:
         print("Fork request sent or fork already exists.")
-        time.sleep(20) # Give GitHub more time to complete the fork
+        time.sleep(20)
         return True
     else:
         print(f"Failed to fork repository: {response.status_code} - {response.text}")
@@ -107,27 +105,22 @@ def process_issue(issue):
                         context += f"\n--- FILE: {os.path.relpath(os.path.join(root, file), temp_dir)} ---\n" + f.read()
                 except Exception: pass
 
-    # --- NEW: Using the Ironclad Prompt ---
     prompt = f"""
     You are a laconic, expert AI programmer. Your task is to fix a GitHub issue by rewriting a single file.
-
     <ISSUE_INFO>
         <TITLE>{issue['title']}</TITLE>
         <DESCRIPTION>{issue['body']}</DESCRIPTION>
     </ISSUE_INFO>
-
     <CODEBASE>
     {context[:500000]}
     </CODEBASE>
-
     <INSTRUCTIONS>
     1.  Analyze the issue and codebase to understand the required change.
     2.  Identify the single file that needs to be modified.
     3.  Rewrite the complete, full content of this file with the fix applied.
-    4.  Your solution MUST be high-quality and production-ready. Do NOT remove major functionality. Do NOT introduce breaking changes like circular imports or NameErrors.
-    5.  Your response MUST contain ONLY the file path and the code. DO NOT add any explanation, apology, or any other text.
+    4.  Your solution MUST be high-quality and production-ready. Do NOT remove major functionality. Do NOT introduce breaking changes.
+    5.  Your response MUST contain ONLY the file path and the code. DO NOT add any explanation.
     </INSTRUCTIONS>
-
     <OUTPUT_FORMAT>
     <FILE_PATH>path/to/your/file.py</FILE_PATH>
     <CODE>
@@ -142,10 +135,7 @@ def process_issue(issue):
     try:
         response = model.generate_content(prompt)
         raw_response = response.text
-
-        # --- NEW: Using the Flexible Parser ---
         match = re.search(r"<FILE_PATH>(.*?)</FILE_PATH>.*?<CODE>\n?```(?:\w+)?\n(.*?)\n?```\n?</CODE>", raw_response, re.DOTALL)
-        
         if not match:
             print("Could not parse Gemini's response. The format was incorrect or the AI was too chatty.")
             print("--- RAW GEMINI OUTPUT (PREVIEW) ---")
@@ -155,7 +145,6 @@ def process_issue(issue):
 
         file_to_change = match.group(1).strip()
         new_code_content = match.group(2).strip()
-
     except Exception as e:
         print(f"Error from Gemini: {e}")
         return
@@ -164,19 +153,18 @@ def process_issue(issue):
     full_path_to_file = os.path.join(temp_dir, file_to_change)
     try:
         os.makedirs(os.path.dirname(full_path_to_file), exist_ok=True)
-        with open(full_path_to_file, 'w', encoding='utf-f8') as f: f.write(new_code_content)
+        # --- THIS IS THE CORRECTED LINE ---
+        with open(full_path_to_file, 'w', encoding='utf-8') as f: f.write(new_code_content)
         print("File overwritten successfully.")
     except FileNotFoundError:
         print(f"Error: Gemini specified a file path that does not exist: {file_to_change}")
         return
 
-    # --- The rest is the same: commit, push, and PR ---
     new_branch = f"fix/ai-{issue['number']}"
     print(f"Pushing to our fork's branch: {new_branch}")
     forked_repo_url_with_auth = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{forked_repo_full_name}.git"
     
     try:
-        # Standard Git operations
         subprocess.run(['git', 'config', 'user.email', f'{GITHUB_USERNAME}@users.noreply.github.com'], cwd=temp_dir, check=True)
         subprocess.run(['git', 'config', 'user.name', GITHUB_USERNAME], cwd=temp_dir, check=True)
         subprocess.run(['git', 'checkout', '-b', new_branch], cwd=temp_dir, check=True)
@@ -211,8 +199,8 @@ if __name__ == "__main__":
         print("ERROR: You must change GITHUB_USERNAME in bot.py!")
         exit(1)
     
-    # We will add the memory part back later. Let's focus on quality first.
     print("Bot starting a new run...")
+    # Using a temporary memory solution until we finalize this part
     issue_to_process = find_github_issues()
     
     if issue_to_process:
@@ -220,6 +208,5 @@ if __name__ == "__main__":
             process_issue(issue_to_process)
         finally:
             print(f"Finished processing {issue_to_process['html_url']}.")
-            # We'll re-add the memory logic after we confirm this works.
     else:
         print("No new issues to process. Run finished.")

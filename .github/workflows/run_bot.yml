@@ -1,19 +1,21 @@
 name: AI Issue Resolver Bot
 
 on:
-  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
   schedule:
-    # Runs every 15 minutes, allowing for ~96 runs per day, safely under the 100 RPD limit of Gemini Pro.
     - cron: '*/15 * * * *'
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # --- THIS IS THE NEW, CRITICAL PART ---
+    permissions:
+      contents: write # Allows the action to push commits back to your repo (for the memory file)
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # We need to fetch all history to be able to push back the memory file
           fetch-depth: 0
 
       - name: Set up Python

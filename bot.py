@@ -10,7 +10,8 @@ import re
 GITHUB_TOKEN = os.getenv('GH_PAT')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GITHUB_USERNAME = "shanaya-Gupta" # I've set this for you, but double-check!
-SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
+# --- NEW: Language Agnostic Search ---
+SEARCH_QUERY = 'is:issue is:open label:"good first issue"'
 PROCESSED_ISSUES_FILE = "processed_issues.txt"
 
 # --- Configure the Gemini AI Models for our Hybrid Team ---
@@ -76,10 +77,12 @@ def process_issue(issue):
 
     print("Reading files for context...")
     context = ""
+    # --- NEW: Expanded file extensions for language agnostic search ---
+    extensions = ('.py', '.js', '.ts', '.md', '.txt', '.html', '.css', '.yaml', '.yml', '.json', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp')
     for root, _, files in os.walk(temp_dir):
         if '.git' in root: continue
         for file in files:
-            if file.endswith(('.py', '.js', '.ts', '.md', '.txt', '.html', '.css', '.yaml')):
+            if file.endswith(extensions):
                 try:
                     with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
                         context += f"\n--- FILE: {os.path.relpath(os.path.join(root, file), temp_dir)} ---\n" + f.read()
@@ -87,30 +90,7 @@ def process_issue(issue):
 
     # --- AGENT 1: THE PLANNER (using FLASH) ---
     print("\n--- Stage 1: Planning (using Gemini Flash) ---")
-    # --- NEW: Stricter prompt to prevent hallucination ---
-    planner_prompt = f"""
-    You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan.
-    
-    <ISSUE_INFO>
-        <TITLE>{issue['title']}</TITLE>
-        <DESCRIPTION>{issue['body']}</DESCRIPTION>
-    </ISSUE_INFO>
-
-    <CODEBASE>
-    {context[:400000]} 
-    </CODEBASE>
-
-    Your task is to produce a plan.
-    1.  From the files provided in the `<CODEBASE>`, you MUST select the single most relevant file path to modify.
-    2.  Do NOT invent or hypothesize a file path. If you cannot identify a suitable file from the provided context, you MUST respond with `<PRIMARY_FILE>N/A</PRIMARY_FILE>`.
-    3.  Create a step-by-step strategy for the fix.
-    
-    Respond in the following XML format:
-    <PLAN>
-        <PRIMARY_FILE>path/to/relevant/file.py</PRIMARY_FILE>
-        <STRATEGY>1. Step one...</STRATEGY>
-    </PLAN>
-    """
+    planner_prompt = f"""You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan. <ISSUE_INFO><TITLE>{issue['title']}</TITLE><DESCRIPTION>{issue['body']}</DESCRIPTION></ISSUE_INFO><CODEBASE>{context[:400000]}</CODEBASE>Your task is to produce a plan. 1. From the files provided in the `<CODEBASE>`, you MUST select the single most relevant file path to modify. 2. Do NOT invent a file path. If you cannot identify a suitable file, respond with `<PRIMARY_FILE>N/A</PRIMARY_FILE>`. 3. Create a step-by-step strategy for the fix. Respond in XML format: <PLAN><PRIMARY_FILE>path/to/file.py</PRIMARY_FILE><STRATEGY>1. Step one...</STRATEGY></PLAN>"""
     try:
         response = model_flash.generate_content(planner_prompt)
         plan_text = response.text
@@ -118,12 +98,9 @@ def process_issue(issue):
         primary_file_match = re.search(r"<PRIMARY_FILE>(.*?)</PRIMARY_FILE>", plan_text, re.DOTALL)
         if not primary_file_match:
             print("Planner failed: Could not parse plan response."); return
-        
         file_to_change = primary_file_match.group(1).strip()
-        # --- NEW: Handle hallucination gracefully ---
         if file_to_change == "N/A":
             print("Planner could not identify a relevant file. Skipping issue."); return
-            
     except Exception as e:
         print(f"Planner failed: {e}"); return
         
@@ -134,25 +111,41 @@ def process_issue(issue):
         with open(os.path.join(temp_dir, file_to_change), 'r', encoding='utf-8', errors='ignore') as f:
             original_file_content = f.read()
     except FileNotFoundError:
-        print(f"Could not find the file '{file_to_change}' identified by the Planner. The AI may have still hallucinated."); return
+        print(f"Could not find the file '{file_to_change}' identified by the Planner."); return
 
-    implementer_prompt = f"""You are a senior software engineer. Implement the code change for a single file based on the provided plan and the original file content. <PLAN>{plan_text}</PLAN><ORIGINAL_FILE_CONTENT for `{file_to_change}`>{original_file_content}</ORIGINAL_FILE_CONTENT>Provide ONLY the full, complete, rewritten content of the file `{file_to_change}`. Do not add any other text or explanation."""
+    implementer_prompt = f"""You are a senior engineer. Implement the code change for `{file_to_change}` based on the plan. <PLAN>{plan_text}</PLAN><ORIGINAL_FILE_CONTENT>{original_file_content}</ORIGINAL_FILE_CONTENT>Provide ONLY the full, complete, rewritten content of the file. Do not add any other text or explanation."""
     try:
         response = model_flash.generate_content(implementer_prompt)
         first_draft_code = response.text.strip()
-        if first_draft_code.startswith("```"):
-            first_draft_code = re.search(r"```(?:\w+)?\n(.*?)\n?```", first_draft_code, re.DOTALL).group(1).strip()
     except Exception as e:
         print(f"Implementer failed: {e}"); return
     
     # --- AGENT 3: THE CRITIC (using PRO) ---
     print("\n--- Stage 3: Self-Correction and Critique (using Gemini Pro) ---")
-    critic_prompt = f"""You are a 40-year experienced staff engineer, known for your meticulous code reviews. Analyze the proposed code change. Critique the first draft and provide a final, improved, production-ready version. <PLAN>{plan_text}</PLAN><FIRST_DRAFT_CODE for `{file_to_change}`>{first_draft_code}</FIRST_DRAFT_CODE>Your task is to return the final, improved code. Think about edge cases, style, robustness, and potential side effects. Provide ONLY the final, complete, rewritten content of the file `{file_to_change}`."""
+    # --- NEW: Respecting the Rate Limit for Gemini Pro ---
+    print("Waiting 15 seconds to respect API rate limits...")
+    time.sleep(15)
+    
+    # --- NEW: A brutally strict prompt for the Critic ---
+    critic_prompt = f"""You are a meticulous and laconic staff engineer. Your sole task is to refine the provided code draft.
+    <PLAN>{plan_text}</PLAN>
+    <FIRST_DRAFT_CODE for `{file_to_change}`>{first_draft_code}</FIRST_DRAFT_CODE>
+    Review the draft for correctness, style, and robustness. Think about side effects.
+    Your entire response will be written directly to the source file. It MUST NOT contain anything other than the raw, final source code for the file `{file_to_change}`.
+    DO NOT use markdown. DO NOT add explanations.
+    """
     try:
         response = model_pro.generate_content(critic_prompt)
-        final_code = response.text.strip()
-        if final_code.startswith("```"):
-            final_code = re.search(r"```(?:\w+)?\n(.*?)\n?```", final_code, re.DOTALL).group(1).strip()
+        final_code_response = response.text.strip()
+        
+        # --- NEW: Smarter, more defensive parsing ---
+        # Assume the AI might still add markdown. Find the last code block and use that.
+        code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", final_code_response, re.DOTALL)
+        if code_blocks:
+            final_code = code_blocks[-1].strip() # Get the last code block
+        else:
+            final_code = final_code_response # Assume the whole response is code if no blocks are found
+            
     except Exception as e:
         print(f"Critic failed: {e}"); return
     
@@ -171,6 +164,7 @@ def process_issue(issue):
     print(f"\nPushing to branch: {new_branch}")
     forked_repo_url_with_auth = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{forked_repo_full_name}.git"
     try:
+        # Standard Git operations
         subprocess.run(['git', 'config', 'user.email', f'{GITHUB_USERNAME}@users.noreply.github.com'], cwd=temp_dir, check=True)
         subprocess.run(['git', 'config', 'user.name', GITHUB_USERNAME], cwd=temp_dir, check=True)
         subprocess.run(['git', 'checkout', '-b', new_branch], cwd=temp_dir, check=True)
@@ -179,7 +173,6 @@ def process_issue(issue):
         if not status.stdout.strip():
             print("AI rewrite resulted in no changes. Aborting."); return
         subprocess.run(['git', 'commit', '-m', f"fix: Resolve issue #{issue['number']}"], cwd=temp_dir, check=True)
-        subprocess.run(['git', 'remote', 'set-url', 'origin', forked_repo_url_with_auth], cwd=temp_dir, check=True)
         subprocess.run(['git', 'push', '-u', 'origin', new_branch, '--force'], cwd=temp_dir, check=True)
         print("Code pushed to our fork on GitHub.")
     except subprocess.CalledProcessError as e:

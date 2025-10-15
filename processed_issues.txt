@@ -21,3 +21,4 @@ https://github.com/rizinorg/rizin/issues/5462
 https://github.com/QuakyCZ/MoneyS3/issues/2
 https://github.com/commitra/vanilla-verse/issues/63
 https://github.com/Vortex1806/boto3-js/issues/25
+https://github.com/PalisadoesFoundation/talawa-plugin/issues/50

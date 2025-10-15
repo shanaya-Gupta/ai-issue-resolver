@@ -7,3 +7,4 @@ https://github.com/AnaJotta/Java/issues/2
 https://github.com/equalizer999/20251015-langtons-ant-sim/issues/1
 https://github.com/stacklok/toolhive/issues/2211
 https://github.com/zerocracy/judges-action/issues/1131
+https://github.com/Lamatic/AgentKit/issues/27

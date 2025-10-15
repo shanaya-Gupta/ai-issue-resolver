@@ -37,3 +37,4 @@ https://github.com/Community-Programmer/FinTechForge/issues/52
 https://github.com/Hexweb-inc/DevProof/issues/9
 https://github.com/EnAccess/micropowermanager/issues/987
 https://github.com/oleasteo/koreader-screenlockpin/issues/6
+https://github.com/ashitaboliff/ashitabo_frontend/issues/2

@@ -26,3 +26,4 @@ https://github.com/MokshSenkusha/Budget_Manager/issues/1
 https://github.com/commitra/vanilla-verse/issues/66
 https://github.com/ethanillingsworth/SyntaxForge/issues/80
 https://github.com/gpicchiarelli/SLIPS/issues/19
+https://github.com/saturnzen/LambdaInformationColonData/issues/104

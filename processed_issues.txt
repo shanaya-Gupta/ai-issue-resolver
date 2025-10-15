@@ -11,3 +11,4 @@ https://github.com/Lamatic/AgentKit/issues/27
 https://github.com/JDuff55/Demon-slayer-pipeline/issues/4
 https://github.com/Debashismitra01/Upblit/issues/18
 https://github.com/oktechjp/card/issues/17
+https://github.com/ts-graphviz/ts-graphviz/issues/1492

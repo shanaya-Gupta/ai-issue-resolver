@@ -5,3 +5,4 @@ https://github.com/VeckoTheGecko/zulip-lagrangian-community/issues/7
 https://github.com/mlflow/mlflow/issues/18323
 https://github.com/AnaJotta/Java/issues/2
 https://github.com/equalizer999/20251015-langtons-ant-sim/issues/1
+https://github.com/stacklok/toolhive/issues/2211

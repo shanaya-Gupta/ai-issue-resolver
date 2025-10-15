@@ -23,3 +23,4 @@ https://github.com/commitra/vanilla-verse/issues/63
 https://github.com/Vortex1806/boto3-js/issues/25
 https://github.com/PalisadoesFoundation/talawa-plugin/issues/50
 https://github.com/MokshSenkusha/Budget_Manager/issues/1
+https://github.com/commitra/vanilla-verse/issues/66

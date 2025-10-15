@@ -262,7 +262,7 @@ def process_issue(issue):
     print("\n--- 📬 Stage 5: Creating Pull Request ---")
     repo_info = requests.get(f"https://api.github.com/repos/{original_repo_full_name}", headers=headers).json()
     base_branch = repo_info.get('default_branch', 'main')
-    pr_body = f"### 🤖 AI-Generated Fix for Issue #{issue['number']}\n\n**Issue:** {issue['title']}\n\nThis PR attempts to resolve the issue by modifying the following file(s):\n- `{file_to_change}`\n\n*This is an AI-generated pull request. Please review thoroughly.*"
+    pr_body = f"### Fix for Issue #{issue['number']}\n\n**Issue:** {issue['title']}\n\nThis PR attempts to resolve the issue by modifying the following file(s):\n- `{file_to_change}`\n\n* Please review thoroughly.*"
     pr_data = { 'title': f"[AI] feat: {issue['title']}", 'body': pr_body, 'head': f"{GITHUB_USERNAME}:{new_branch}", 'base': base_branch }
     pr_url = f"https://api.github.com/repos/{original_repo_full_name}/pulls"
     pr_response = requests.post(pr_url, headers=headers, json=pr_data)

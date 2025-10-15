@@ -35,3 +35,4 @@ https://github.com/fjall-rs/lsm-tree/issues/168
 https://github.com/ShaunRussell27/Dev-Ops/issues/10
 https://github.com/Community-Programmer/FinTechForge/issues/52
 https://github.com/Hexweb-inc/DevProof/issues/9
+https://github.com/EnAccess/micropowermanager/issues/987

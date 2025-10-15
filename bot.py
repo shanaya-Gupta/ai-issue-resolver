@@ -15,9 +15,7 @@ PROCESSED_ISSUES_FILE = "processed_issues.txt"
 
 # --- Configure the Gemini AI Models for our Hybrid Team ---
 genai.configure(api_key=GEMINI_API_KEY)
-# Flash model for high-token, low-reasoning tasks (Planning, Implementing)
 model_flash = genai.GenerativeModel('gemini-flash-latest')
-# Pro model for low-token, high-reasoning tasks (Critiquing)
 model_pro = genai.GenerativeModel('gemini-2.5-pro')
 
 # --- HELPER FUNCTIONS ---
@@ -89,15 +87,43 @@ def process_issue(issue):
 
     # --- AGENT 1: THE PLANNER (using FLASH) ---
     print("\n--- Stage 1: Planning (using Gemini Flash) ---")
-    planner_prompt = f"""You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan. <ISSUE_INFO><TITLE>{issue['title']}</TITLE><DESCRIPTION>{issue['body']}</DESCRIPTION></ISSUE_INFO><CODEBASE>{context[:400000]}</CODEBASE>Your task is to produce a plan in the following XML format. Identify the single primary file to change, list any other files that may be impacted (like tests), and create a step-by-step plan. <PLAN><PRIMARY_FILE>path/to/file.py</PRIMARY_FILE><IMPACTED_FILES><FILE>path/to/test.py</FILE></IMPACTED_FILES><STRATEGY>1. Step one...</STRATEGY></PLAN>"""
+    # --- NEW: Stricter prompt to prevent hallucination ---
+    planner_prompt = f"""
+    You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan.
+    
+    <ISSUE_INFO>
+        <TITLE>{issue['title']}</TITLE>
+        <DESCRIPTION>{issue['body']}</DESCRIPTION>
+    </ISSUE_INFO>
+
+    <CODEBASE>
+    {context[:400000]} 
+    </CODEBASE>
+
+    Your task is to produce a plan.
+    1.  From the files provided in the `<CODEBASE>`, you MUST select the single most relevant file path to modify.
+    2.  Do NOT invent or hypothesize a file path. If you cannot identify a suitable file from the provided context, you MUST respond with `<PRIMARY_FILE>N/A</PRIMARY_FILE>`.
+    3.  Create a step-by-step strategy for the fix.
+    
+    Respond in the following XML format:
+    <PLAN>
+        <PRIMARY_FILE>path/to/relevant/file.py</PRIMARY_FILE>
+        <STRATEGY>1. Step one...</STRATEGY>
+    </PLAN>
+    """
     try:
         response = model_flash.generate_content(planner_prompt)
         plan_text = response.text
         print(f"Generated Plan:\n{plan_text}")
         primary_file_match = re.search(r"<PRIMARY_FILE>(.*?)</PRIMARY_FILE>", plan_text, re.DOTALL)
         if not primary_file_match:
-            print("Planner failed: Could not determine primary file to change."); return
+            print("Planner failed: Could not parse plan response."); return
+        
         file_to_change = primary_file_match.group(1).strip()
+        # --- NEW: Handle hallucination gracefully ---
+        if file_to_change == "N/A":
+            print("Planner could not identify a relevant file. Skipping issue."); return
+            
     except Exception as e:
         print(f"Planner failed: {e}"); return
         
@@ -108,7 +134,7 @@ def process_issue(issue):
         with open(os.path.join(temp_dir, file_to_change), 'r', encoding='utf-8', errors='ignore') as f:
             original_file_content = f.read()
     except FileNotFoundError:
-        print(f"Could not find the file '{file_to_change}' identified by the Planner."); return
+        print(f"Could not find the file '{file_to_change}' identified by the Planner. The AI may have still hallucinated."); return
 
     implementer_prompt = f"""You are a senior software engineer. Implement the code change for a single file based on the provided plan and the original file content. <PLAN>{plan_text}</PLAN><ORIGINAL_FILE_CONTENT for `{file_to_change}`>{original_file_content}</ORIGINAL_FILE_CONTENT>Provide ONLY the full, complete, rewritten content of the file `{file_to_change}`. Do not add any other text or explanation."""
     try:
@@ -121,7 +147,7 @@ def process_issue(issue):
     
     # --- AGENT 3: THE CRITIC (using PRO) ---
     print("\n--- Stage 3: Self-Correction and Critique (using Gemini Pro) ---")
-    critic_prompt = f"""You are a 40-year experienced staff engineer, known for your meticulous code reviews. Analyze the proposed code change. Critique the first draft and provide a final, improved, production-ready version. <PLAN>{plan_text}</PLAN><FIRST_DRAFT_CODE for `{file_to_change}`>{first_draft_code}</FIRST_DRAFT_CODE>Your task is to return the final, improved code. Think about edge cases, style, robustness, and potential side effects that the junior developer might have missed (e.g., make a check case-insensitive, add error handling, update tests). Provide ONLY the final, complete, rewritten content of the file `{file_to_change}`."""
+    critic_prompt = f"""You are a 40-year experienced staff engineer, known for your meticulous code reviews. Analyze the proposed code change. Critique the first draft and provide a final, improved, production-ready version. <PLAN>{plan_text}</PLAN><FIRST_DRAFT_CODE for `{file_to_change}`>{first_draft_code}</FIRST_DRAFT_CODE>Your task is to return the final, improved code. Think about edge cases, style, robustness, and potential side effects. Provide ONLY the final, complete, rewritten content of the file `{file_to_change}`."""
     try:
         response = model_pro.generate_content(critic_prompt)
         final_code = response.text.strip()

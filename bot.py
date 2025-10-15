@@ -13,10 +13,12 @@ GITHUB_USERNAME = "shanaya-Gupta" # I've set this for you, but double-check!
 SEARCH_QUERY = 'is:issue is:open label:"good first issue" language:python'
 PROCESSED_ISSUES_FILE = "processed_issues.txt"
 
-# --- Configure the Gemini AI Model ---
-# Using the smartest model for the highest quality reasoning.
+# --- Configure the Gemini AI Models for our Hybrid Team ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
+# Flash model for high-token, low-reasoning tasks (Planning, Implementing)
+model_flash = genai.GenerativeModel('gemini-flash-latest')
+# Pro model for low-token, high-reasoning tasks (Critiquing)
+model_pro = genai.GenerativeModel('gemini-2.5-pro')
 
 # --- HELPER FUNCTIONS ---
 
@@ -34,30 +36,24 @@ def find_github_issues():
     url = f"https://api.github.com/search/issues?q={SEARCH_QUERY}&sort=created&order=desc&per_page=50"
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        print(f"Error searching for issues: {response.status_code}")
-        return None
+        print(f"Error searching for issues: {response.status_code}"); return None
     items = response.json().get('items', [])
     for issue in items:
         if issue['html_url'] not in processed_issues:
-            print(f"Found new issue to process: {issue['html_url']}")
-            return issue
-    print("No new issues found to process in this run.")
-    return None
+            print(f"Found new issue to process: {issue['html_url']}"); return issue
+    print("No new issues found to process in this run."); return None
 
 def fork_repository(repo_full_name, headers):
     print(f"Forking {repo_full_name}...")
     fork_url = f"https://api.github.com/repos/{repo_full_name}/forks"
     response = requests.post(fork_url, headers=headers)
     if response.status_code in [200, 201, 202]:
-        print("Fork request sent or fork already exists.")
-        time.sleep(20)
-        return True
+        print("Fork request sent or fork already exists."); time.sleep(20); return True
     else:
-        print(f"Failed to fork repository: {response.status_code} - {response.text}")
-        return False
+        print(f"Failed to fork repository: {response.status_code} - {response.text}"); return False
 
 def process_issue(issue):
-    """Processes an issue using the Plan, Implement, Critique chain."""
+    """Processes an issue using the Plan, Implement, Critique chain with a Hybrid AI Team."""
     issue_url = issue['html_url']
     original_repo_full_name = issue['repository_url'].replace('https://api.github.com/repos/', '')
     headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
@@ -91,40 +87,13 @@ def process_issue(issue):
                         context += f"\n--- FILE: {os.path.relpath(os.path.join(root, file), temp_dir)} ---\n" + f.read()
                 except Exception: pass
 
-    # --- AGENT 1: THE PLANNER ---
-    print("\n--- Stage 1: Planning ---")
-    planner_prompt = f"""
-    You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan.
-    
-    <ISSUE_INFO>
-        <TITLE>{issue['title']}</TITLE>
-        <DESCRIPTION>{issue['body']}</DESCRIPTION>
-    </ISSUE_INFO>
-
-    <CODEBASE>
-    {context[:400000]} 
-    </CODEBASE>
-
-    Your task is to produce a plan in the following XML format. Identify the single primary file to change, list any other files that may be impacted (like tests or documentation), and create a step-by-step plan.
-    
-    <PLAN>
-        <PRIMARY_FILE>path/to/primary/file.py</PRIMARY_FILE>
-        <IMPACTED_FILES>
-            <FILE>path/to/test/file.py</FILE>
-            <FILE>path/to/another/file.md</FILE>
-        </IMPACTED_FILES>
-        <STRATEGY>
-        1.  In the primary file, I will modify the `example` function to handle the edge case.
-        2.  I will add a new case-insensitive check for the 'signature.png' exclusion.
-        3.  I will then update the corresponding test file `test/file.py` to reflect this new logic.
-        </STRATEGY>
-    </PLAN>
-    """
+    # --- AGENT 1: THE PLANNER (using FLASH) ---
+    print("\n--- Stage 1: Planning (using Gemini Flash) ---")
+    planner_prompt = f"""You are a principal software engineer. Analyze the following issue and codebase to create a robust implementation plan. <ISSUE_INFO><TITLE>{issue['title']}</TITLE><DESCRIPTION>{issue['body']}</DESCRIPTION></ISSUE_INFO><CODEBASE>{context[:400000]}</CODEBASE>Your task is to produce a plan in the following XML format. Identify the single primary file to change, list any other files that may be impacted (like tests), and create a step-by-step plan. <PLAN><PRIMARY_FILE>path/to/file.py</PRIMARY_FILE><IMPACTED_FILES><FILE>path/to/test.py</FILE></IMPACTED_FILES><STRATEGY>1. Step one...</STRATEGY></PLAN>"""
     try:
-        response = model.generate_content(planner_prompt)
+        response = model_flash.generate_content(planner_prompt)
         plan_text = response.text
         print(f"Generated Plan:\n{plan_text}")
-        
         primary_file_match = re.search(r"<PRIMARY_FILE>(.*?)</PRIMARY_FILE>", plan_text, re.DOTALL)
         if not primary_file_match:
             print("Planner failed: Could not determine primary file to change."); return
@@ -132,54 +101,31 @@ def process_issue(issue):
     except Exception as e:
         print(f"Planner failed: {e}"); return
         
-    # --- AGENT 2: THE IMPLEMENTER (CODER) ---
-    print(f"\n--- Stage 2: Implementation for {file_to_change} ---")
-    implementer_prompt = f"""
-    You are a senior software engineer. Your task is to implement the code change for a single file based on the provided plan.
-    
-    <PLAN>
-    {plan_text}
-    </PLAN>
-
-    <CODEBASE>
-    {context[:400000]}
-    </CODEBASE>
-
-    Provide ONLY the full, complete, rewritten content of the file `{file_to_change}`. Do not add any other text or explanation. Your response must be only the raw code.
-    """
+    # --- AGENT 2: THE IMPLEMENTER (using FLASH) ---
+    print(f"\n--- Stage 2: Implementation for {file_to_change} (using Gemini Flash) ---")
+    original_file_content = ""
     try:
-        response = model.generate_content(implementer_prompt)
-        first_draft_code = response.text
-        # Clean up potential markdown
-        if first_draft_code.strip().startswith("```"):
+        with open(os.path.join(temp_dir, file_to_change), 'r', encoding='utf-8', errors='ignore') as f:
+            original_file_content = f.read()
+    except FileNotFoundError:
+        print(f"Could not find the file '{file_to_change}' identified by the Planner."); return
+
+    implementer_prompt = f"""You are a senior software engineer. Implement the code change for a single file based on the provided plan and the original file content. <PLAN>{plan_text}</PLAN><ORIGINAL_FILE_CONTENT for `{file_to_change}`>{original_file_content}</ORIGINAL_FILE_CONTENT>Provide ONLY the full, complete, rewritten content of the file `{file_to_change}`. Do not add any other text or explanation."""
+    try:
+        response = model_flash.generate_content(implementer_prompt)
+        first_draft_code = response.text.strip()
+        if first_draft_code.startswith("```"):
             first_draft_code = re.search(r"```(?:\w+)?\n(.*?)\n?```", first_draft_code, re.DOTALL).group(1).strip()
     except Exception as e:
         print(f"Implementer failed: {e}"); return
     
-    # --- AGENT 3: THE CRITIC (SENIOR REVIEWER) ---
-    print("\n--- Stage 3: Self-Correction and Critique ---")
-    critic_prompt = f"""
-    You are a 40-year experienced staff engineer, known for your meticulous code reviews.
-    Analyze the proposed code change in the context of the original issue and the implementation plan.
-    Critique the first draft and provide a final, improved, production-ready version of the code.
-    
-    <PLAN>
-    {plan_text}
-    </PLAN>
-    
-    <FIRST_DRAFT_CODE for `{file_to_change}`>
-    {first_draft_code}
-    </FIRST_DRAFT_CODE>
-
-    Your task is to return the final, improved code. Think about edge cases, style, robustness, and potential side effects that the junior developer might have missed. For example, make a check case-insensitive if needed, or add error handling.
-    
-    Provide ONLY the final, complete, rewritten content of the file `{file_to_change}`. Do not add any explanation or other text.
-    """
+    # --- AGENT 3: THE CRITIC (using PRO) ---
+    print("\n--- Stage 3: Self-Correction and Critique (using Gemini Pro) ---")
+    critic_prompt = f"""You are a 40-year experienced staff engineer, known for your meticulous code reviews. Analyze the proposed code change. Critique the first draft and provide a final, improved, production-ready version. <PLAN>{plan_text}</PLAN><FIRST_DRAFT_CODE for `{file_to_change}`>{first_draft_code}</FIRST_DRAFT_CODE>Your task is to return the final, improved code. Think about edge cases, style, robustness, and potential side effects that the junior developer might have missed (e.g., make a check case-insensitive, add error handling, update tests). Provide ONLY the final, complete, rewritten content of the file `{file_to_change}`."""
     try:
-        response = model.generate_content(critic_prompt)
-        final_code = response.text
-        # Clean up potential markdown
-        if final_code.strip().startswith("```"):
+        response = model_pro.generate_content(critic_prompt)
+        final_code = response.text.strip()
+        if final_code.startswith("```"):
             final_code = re.search(r"```(?:\w+)?\n(.*?)\n?```", final_code, re.DOTALL).group(1).strip()
     except Exception as e:
         print(f"Critic failed: {e}"); return

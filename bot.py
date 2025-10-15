@@ -19,7 +19,7 @@ PROCESSED_ISSUES_FILE = "processed_issues.txt"
 # Configure Gemini AI Models
 genai.configure(api_key=GEMINI_API_KEY)
 model_flash = genai.GenerativeModel('gemini-flash-latest')
-model_pro = genai.GenerativeModel('gemini-2.5-pro')
+model_pro = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- HELPER FUNCTIONS ---
 

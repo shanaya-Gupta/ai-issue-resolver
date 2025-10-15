@@ -12,7 +12,7 @@ from pathlib import Path
 GITHUB_TOKEN = os.getenv('GH_PAT')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GITHUB_USERNAME = "shanaya-Gupta" # I've set this for you, but double-check!
-SEARCH_QUERY = 'is:issue is:open label:"good first issue" OR label:"documentation"' # Expanded search
+SEARCH_QUERY = 'is:issue is:open label:"good first issue"'
 PROCESSED_ISSUES_FILE = "processed_issues.txt"
 
 # --- Configure the Gemini AI Models for our Hybrid Team ---

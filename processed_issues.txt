@@ -68,3 +68,4 @@ https://github.com/Au5-ai/Au5/issues/307
 https://github.com/github-linguist/linguist/issues/7637
 https://github.com/yegor256/judges/issues/304
 https://github.com/kestra-io/kestra/issues/12084
+https://github.com/Ayushjhawar8/Flavor-ai/issues/473

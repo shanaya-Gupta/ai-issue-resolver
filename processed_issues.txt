@@ -61,3 +61,4 @@ https://github.com/aerium-network/aerium/issues/30
 https://github.com/iamrupambiswas/Project-Management-Tool/issues/7
 https://github.com/Darkbeast-glitch/DjangoCampus-frontend/issues/12
 https://github.com/UCL-ARC/codemapper/issues/9
+https://github.com/ADORSYS-GIS/wazuh-agent/issues/115

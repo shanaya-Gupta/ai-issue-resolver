@@ -754,6 +754,11 @@ if __name__ == "__main__":
     else:
         print("🏁 No issues found")
     
-    metrics = Metrics.load() if os.path.exists(METRICS_FILE) else {}
+    if os.path.exists(METRICS_FILE):
+        with open(METRICS_FILE, 'r') as f:
+            metrics = json.load(f)
+    else:
+        metrics = {}
+
     print(f"\n📊 Stats: {metrics.get('issues_processed', 0)} processed, "
           f"{metrics.get('prs_created', 0)} PRs, {metrics.get('errors', 0)} errors")

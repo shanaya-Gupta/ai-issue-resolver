@@ -53,3 +53,4 @@ https://github.com/amandewatnitrr/hacking-tutorial/issues/84
 https://github.com/WebClub-NITK/wec-nitk-website/issues/62
 https://github.com/gofr-dev/gofr/issues/2434
 https://github.com/juhongyi/spapify/issues/1
+https://github.com/NevaMind-AI/memU/issues/52

@@ -66,3 +66,4 @@ https://github.com/Hanton-Code/special-olympics-aragon/issues/4
 https://github.com/lindelwa122/dom-wizard/issues/74
 https://github.com/Au5-ai/Au5/issues/307
 https://github.com/github-linguist/linguist/issues/7637
+https://github.com/yegor256/judges/issues/304

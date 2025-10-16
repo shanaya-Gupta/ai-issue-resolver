@@ -49,3 +49,4 @@ https://github.com/UniversalMediaServer/UniversalMediaServer/issues/5803
 https://github.com/JackEblan/EblanLauncher/issues/243
 https://github.com/home-assistant/core/issues/154578
 https://github.com/sujal-GITHUB/Parallelia/issues/17
+https://github.com/amandewatnitrr/hacking-tutorial/issues/84

@@ -75,3 +75,4 @@ https://github.com/kubeflow/trainer/issues/2894
 https://github.com/medic/cht-android/issues/415
 https://github.com/goquibble/avatars/issues/1
 https://github.com/witchofthewires/meshtool/issues/3
+https://github.com/jmbarbone/cnd/issues/18

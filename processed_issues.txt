@@ -73,3 +73,4 @@ https://github.com/lindelwa122/dom-wizard/issues/78
 https://github.com/l3montree-dev/devguard/issues/1281
 https://github.com/kubeflow/trainer/issues/2894
 https://github.com/medic/cht-android/issues/415
+https://github.com/goquibble/avatars/issues/1

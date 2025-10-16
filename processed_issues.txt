@@ -55,3 +55,4 @@ https://github.com/gofr-dev/gofr/issues/2434
 https://github.com/juhongyi/spapify/issues/1
 https://github.com/NevaMind-AI/memU/issues/52
 https://github.com/aerium-network/aerium/issues/25
+https://github.com/kestra-io/kestra/issues/12060

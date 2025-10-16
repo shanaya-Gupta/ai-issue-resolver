@@ -70,3 +70,4 @@ https://github.com/yegor256/judges/issues/304
 https://github.com/kestra-io/kestra/issues/12084
 https://github.com/Ayushjhawar8/Flavor-ai/issues/473
 https://github.com/lindelwa122/dom-wizard/issues/78
+https://github.com/l3montree-dev/devguard/issues/1281

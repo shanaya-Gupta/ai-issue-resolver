@@ -47,3 +47,4 @@ https://github.com/code-charity/youtube/issues/3266
 https://github.com/anthonybanion/Clothing-Store-Frontend/issues/1
 https://github.com/UniversalMediaServer/UniversalMediaServer/issues/5803
 https://github.com/JackEblan/EblanLauncher/issues/243
+https://github.com/home-assistant/core/issues/154578

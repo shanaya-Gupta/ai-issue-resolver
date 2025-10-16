@@ -51,3 +51,4 @@ https://github.com/home-assistant/core/issues/154578
 https://github.com/sujal-GITHUB/Parallelia/issues/17
 https://github.com/amandewatnitrr/hacking-tutorial/issues/84
 https://github.com/WebClub-NITK/wec-nitk-website/issues/62
+https://github.com/gofr-dev/gofr/issues/2434

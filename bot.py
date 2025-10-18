@@ -106,8 +106,8 @@ class RateLimiter:
 # Initialize rate limiter and AI models
 rate_limiter = RateLimiter()
 genai.configure(api_key=CONFIG.GEMINI_API_KEY)
-model_flash = genai.GenerativeModel('gemini-1.5-flash-latest')
-model_pro = genai.GenerativeModel('gemini-1.5-pro-latest')
+model_flash = genai.GenerativeModel('gemini-2.5-flash')
+model_pro = genai.GenerativeModel('gemini-2.5-pro')
 
 # --- Simplified Metrics ---
 class Metrics:

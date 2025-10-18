@@ -3,7 +3,7 @@ name: AI Issue Resolver Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/45 * * * *'
+    - cron: '0 * * * *'
 
 jobs:
   run-bot:

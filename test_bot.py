@@ -2,8 +2,21 @@ import unittest
 import os
 import shutil
 from pathlib import Path
-from bot import validate_changes, select_relevant_files
+from bot import validate_changes, select_relevant_files, is_safe_to_modify, get_modified_files
 import unittest.mock
+
+class TestIsSafeToModify(unittest.TestCase):
+    def test_jsx_is_safe(self):
+        self.assertTrue(is_safe_to_modify("src/component.jsx"))
+
+class TestGetModifiedFiles(unittest.TestCase):
+    def test_get_modified_files(self):
+        final_implementations = {
+            "file1.py": {"content": "...", "change_type": "REWRITE"},
+            "file2.js": {"content": "...", "change_type": "APPEND"}
+        }
+        modified_files = get_modified_files(final_implementations)
+        self.assertEqual(sorted(modified_files), ["file1.py", "file2.js"])
 
 class TestValidateChanges(unittest.TestCase):
     def setUp(self):

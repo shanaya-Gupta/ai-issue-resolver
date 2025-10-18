@@ -47,7 +47,7 @@ class Config:
     def __post_init__(self):
         # EXPANDED safe file extensions - include all common config files
         self.SAFE_FILE_EXTENSIONS = {
-            '.py', '.js', '.ts', '.md', '.txt', '.html', '.css', '.json', 
+            '.py', '.js', '.jsx', '.ts', '.md', '.txt', '.html', '.css', '.json',
             '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml',
             '.java', '.cpp', '.c', '.h', '.hpp', '.rs', '.go', '.rb',
             '.php', '.sh', '.bash', '.zsh', '.ps1', '.bat'
@@ -145,6 +145,47 @@ def add_issue_to_processed(issue_url: str):
     data = {"processed_issues": list(processed)}
     with open(PROCESSED_ISSUES_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+
+def get_modified_files(final_implementations: Dict) -> List[str]:
+    """Extracts the list of modified file paths from the implementation dictionary."""
+    return list(final_implementations.keys())
+
+def extract_json_from_response(text: str) -> Optional[any]:
+    """Extracts a JSON object or list from a string response."""
+    # Look for JSON in markdown code blocks
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        text = match.group(1)
+
+    # Greedily find what looks like the biggest JSON object or array
+    match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+    if match:
+        text = match.group(0)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # As a last resort, try to fix common errors like trailing commas
+        text = re.sub(r',\s*([\}\]])', r'\1', text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+def extract_code_from_response(text: str) -> str:
+    """Extracts code from a response, removing markdown code blocks if present."""
+    # Look for code in markdown code blocks
+    match = re.search(r"```(?:\w+)?\n(.*?)\n```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Handle the case where the entire response is a code block
+    if text.strip().startswith("```"):
+        return re.sub(r"```(?:\w+)?\n(.*?)\n```", r"\1", text, flags=re.DOTALL).strip()
+
+    # Fallback for code that is not in a block
+    return text.strip()
+
 
 def is_safe_to_modify(file_path: str) -> bool:
     """RELAXED safety checks - only block actually dangerous files"""
@@ -347,18 +388,11 @@ def select_relevant_files(issue: Dict, file_structure: str) -> List[str]:
 
     try:
         response_text = call_gemini_with_limits(model_flash, prompt, "flash")
+        selected_files = extract_json_from_response(response_text)
 
-        # Find the JSON list in the response
-        json_match = re.search(r'\[(.*?)\]', response_text, re.DOTALL)
-        if json_match:
-            # Reconstruct the list string to be valid JSON
-            files_str = f"[{json_match.group(1)}]"
-            selected_files = json.loads(files_str)
-
-            # Ensure it's a list of strings
-            if isinstance(selected_files, list) and all(isinstance(f, str) for f in selected_files):
-                print(f"✅ Selected files: {selected_files[:5]}")
-                return selected_files[:5] # Return max 5 files
+        if isinstance(selected_files, list) and all(isinstance(f, str) for f in selected_files):
+            print(f"✅ Selected files: {selected_files[:5]}")
+            return selected_files[:5]
 
         print("⚠️ Could not parse relevant files from response.")
         return []
@@ -449,16 +483,9 @@ def create_implementation_plan(issue: Dict, repo_context: Dict, task_type: str) 
 
     try:
         response = call_gemini_with_limits(model_flash, planner_prompt, "flash")
-        
-        # Extract JSON
-        json_match = re.search(r'\{.*\}', response, re.DOTALL)
-        if not json_match:
-            print("❌ Could not parse plan")
-            return None
-            
-        plan = json.loads(json_match.group())
-        
-        if not plan.get("files"):
+        plan = extract_json_from_response(response)
+
+        if not plan or not isinstance(plan, dict) or not plan.get("files"):
             print("❌ No files in plan")
             return None
             
@@ -521,9 +548,11 @@ def implement_changes(plan: Dict, repo_context: Dict) -> Dict:
         """
 
         try:
-            response = call_gemini_with_limits(model_flash, prompt, "flash")
+            raw_response = call_gemini_with_limits(model_flash, prompt, "flash")
+            code_content = extract_code_from_response(raw_response)
+
             implementations[file_path] = {
-                "content": response.strip(),
+                "content": code_content,
                 "change_type": change_type
             }
             print(f"✅ Implemented: {file_path}")
@@ -574,19 +603,14 @@ def critique_and_refine(plan: Dict, implementations: Dict, repo_context: Dict) -
 
         try:
             response_text = call_gemini_with_limits(model_pro, prompt, "pro")
+            review = extract_json_from_response(response_text)
             
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                review = json.loads(json_match.group())
-                # Ensure refined code is clean
-                code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", review.get("refined_code", ""), re.DOTALL)
-                if code_blocks:
-                    review["refined_code"] = code_blocks[-1].strip()
-                
+            if review and isinstance(review, dict) and "refined_code" in review:
+                review["refined_code"] = extract_code_from_response(review["refined_code"])
                 reviews[file_path] = review
                 print(f"✅ Reviewed: {file_path}")
             else:
-                raise ValueError("No JSON object found in critique response.")
+                raise ValueError("Invalid or missing JSON in critique response.")
 
         except Exception as e:
             print(f"❌ Critique failed for {file_path}: {e}")
@@ -785,7 +809,7 @@ def process_issue(issue):
         repo_info = requests.get(f"https://api.github.com/repos/{original_repo_full_name}", headers=headers).json()
         base_branch = repo_info.get('default_branch', 'main')
         
-        modified_files = list(refined_implementations.keys())
+        modified_files = get_modified_files(final_implementations)
         pr_body = f"""### Fix for Issue #{issue['number']}
 
 **Issue:** {issue['title']}

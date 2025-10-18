@@ -50,7 +50,7 @@ class Config:
             '.py', '.js', '.ts', '.md', '.txt', '.html', '.css', '.json', 
             '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml',
             '.java', '.cpp', '.c', '.h', '.hpp', '.rs', '.go', '.rb',
-            '.php', '.sh', '.bash', '.zsh', '.ps1', '.bat'
+            '.php', '.sh', '.bash', '.zsh', '.ps1', '.bat' , '.cs'
         }
         
         # ONLY block actual dangerous patterns

@@ -39,10 +39,10 @@ class Config:
     UNSAFE_FILE_NAMES: Set[str] = None
     
     # Rate Limiting
-    REQUESTS_PER_MINUTE_FLASH: int = 8
-    REQUESTS_PER_MINUTE_PRO: int = 4
-    TOKENS_PER_MINUTE_FLASH: int = 200000
-    TOKENS_PER_MINUTE_PRO: int = 100000
+    REQUESTS_PER_MINUTE_FLASH: int = 10
+    REQUESTS_PER_MINUTE_PRO: int = 5
+    TOKENS_PER_MINUTE_FLASH: int = 250000
+    TOKENS_PER_MINUTE_PRO: int = 125000
     
     def __post_init__(self):
         # EXPANDED safe file extensions - include all common config files
@@ -106,8 +106,8 @@ class RateLimiter:
 # Initialize rate limiter and AI models
 rate_limiter = RateLimiter()
 genai.configure(api_key=CONFIG.GEMINI_API_KEY)
-model_flash = genai.GenerativeModel('gemini-2.0-flash-exp')
-model_pro = genai.GenerativeModel('gemini-2.0-flash-thinking-exp')
+model_flash = genai.GenerativeModel('gemini-1.5-flash-latest')
+model_pro = genai.GenerativeModel('gemini-1.5-pro-latest')
 
 # --- Simplified Metrics ---
 class Metrics:
@@ -243,14 +243,10 @@ def find_github_issues():
     return None
 
 # --- Better Repository Analysis ---
-def get_repo_context(temp_dir: str) -> Dict:
-    """Gather context with RELAXED safety"""
-    print("📚 Analyzing repository...")
-    context = {"structure": "", "files": {}}
-    
+def get_repo_structure(temp_dir: str) -> str:
+    """Get a string representation of the repository structure."""
+    structure_lines = []
     try:
-        # Build simple structure
-        structure_lines = []
         for root, dirs, files in os.walk(temp_dir):
             # Filter directories
             dirs[:] = [d for d in dirs if d not in CONFIG.BLACKLISTED_DIRS and not d.startswith('.')]
@@ -269,52 +265,46 @@ def get_repo_context(temp_dir: str) -> Dict:
             
             if len(structure_lines) > 150:
                 break
-        
-        context["structure"] = '\n'.join(structure_lines)
-        
-        # Gather files with RELAXED safety
-        total_size = 0
-        files_found = 0
-        
-        for root, dirs, files in os.walk(temp_dir):
-            dirs[:] = [d for d in dirs if d not in CONFIG.BLACKLISTED_DIRS]
-            
-            for file in files:
-                if files_found > 50:  # Reasonable limit
-                    break
-                    
-                full_path = Path(root) / file
-                rel_path = str(full_path.relative_to(temp_dir))
-                
-                # Use relaxed safety check
-                if not is_safe_to_modify(rel_path):
-                    continue
-                
-                try:
-                    content = full_path.read_text(encoding='utf-8', errors='ignore')
-                    
-                    # Size limits
-                    if len(content) > CONFIG.MAX_FILE_SIZE:
-                        content = content[:CONFIG.MAX_FILE_SIZE] + "\n... [TRUNCATED] ..."
-                    
-                    context["files"][rel_path] = content
-                    total_size += len(content)
-                    files_found += 1
-                    
-                    if total_size > CONFIG.MAX_CONTEXT_SIZE:
-                        break
-                        
-                except Exception as e:
-                    continue  # Skip unreadable files
-                    
-            if total_size > CONFIG.MAX_CONTEXT_SIZE:
-                break
-                
     except Exception as e:
-        print(f"⚠️ Error gathering repo context: {e}")
-        Metrics.update("errors")
-        
-    print(f"📁 Found {len(context['files'])} safe files")
+        print(f"⚠️ Error building file structure: {e}")
+
+    return '\n'.join(structure_lines)
+
+def get_repo_context(temp_dir: str, relevant_files: List[str]) -> Dict:
+    """Gather context from a list of relevant files."""
+    print("📚 Analyzing repository...")
+    context = {"files": {}}
+    total_size = 0
+
+    if not relevant_files:
+        print("🤷 No relevant files selected.")
+        return context
+
+    for rel_path in relevant_files:
+        try:
+            full_path = Path(temp_dir) / rel_path
+            
+            # Basic safety check
+            if not is_safe_to_modify(rel_path) or not full_path.is_file():
+                print(f"⚠️ Skipping unsafe or non-existent file: {rel_path}")
+                continue
+
+            content = full_path.read_text(encoding='utf-8', errors='ignore')
+
+            if len(content) > CONFIG.MAX_FILE_SIZE:
+                content = content[:CONFIG.MAX_FILE_SIZE] + "\n... [TRUNCATED] ..."
+
+            context["files"][rel_path] = content
+            total_size += len(content)
+
+            if total_size > CONFIG.MAX_CONTEXT_SIZE:
+                print("⚠️ Exceeded max context size.")
+                break
+        except Exception as e:
+            print(f"⚠️ Error reading file {rel_path}: {e}")
+            continue
+
+    print(f"📁 Found {len(context['files'])} relevant files")
     return context
 
 def fork_repository(repo_full_name: str, headers: Dict) -> bool:
@@ -337,6 +327,46 @@ def fork_repository(repo_full_name: str, headers: Dict) -> bool:
         return False
 
 # --- AI Agents ---
+def select_relevant_files(issue: Dict, file_structure: str) -> List[str]:
+    """Select relevant files using AI"""
+    print("\n--- 🧠 Selecting Relevant Files ---")
+
+    prompt = f"""
+    Based on the following GitHub issue and the repository's file structure, please identify the most relevant files to modify.
+
+    **Issue Title:** {issue.get('title')}
+    **Issue Body:**
+    {issue.get('body', '')[:1500]}
+
+    **File Structure:**
+    {file_structure}
+
+    Respond with a JSON-formatted list of the file paths you believe are most relevant to solving this issue. For example: ["src/main.py", "lib/utils.js"].
+    Return a maximum of 5 files. If no files seem relevant, return an empty list.
+    """
+
+    try:
+        response_text = call_gemini_with_limits(model_flash, prompt, "flash")
+
+        # Find the JSON list in the response
+        json_match = re.search(r'\[(.*?)\]', response_text, re.DOTALL)
+        if json_match:
+            # Reconstruct the list string to be valid JSON
+            files_str = f"[{json_match.group(1)}]"
+            selected_files = json.loads(files_str)
+
+            # Ensure it's a list of strings
+            if isinstance(selected_files, list) and all(isinstance(f, str) for f in selected_files):
+                print(f"✅ Selected files: {selected_files[:5]}")
+                return selected_files[:5] # Return max 5 files
+
+        print("⚠️ Could not parse relevant files from response.")
+        return []
+
+    except Exception as e:
+        print(f"❌ Error selecting relevant files: {e}")
+        return []
+
 def classify_task(issue: Dict) -> str:
     """Simple task classification"""
     print("\n--- 🤔 Task Classification ---")
@@ -365,7 +395,7 @@ Respond with one word only."""
         return "UNSUPPORTED"
 
 def create_implementation_plan(issue: Dict, repo_context: Dict, task_type: str) -> Optional[Dict]:
-    """Create implementation plan"""
+    """Create a detailed, step-by-step implementation plan."""
     print("\n--- 🧠 Planning ---")
     
     available_files = list(repo_context['files'].keys())
@@ -373,25 +403,49 @@ def create_implementation_plan(issue: Dict, repo_context: Dict, task_type: str) 
         print("❌ No files available for analysis")
         return None
     
-    planner_prompt = f"""Create an implementation plan for this {task_type} task:
+    planner_prompt = f"""
+    You are an expert software engineer. Your task is to create a detailed, step-by-step implementation plan to resolve a GitHub issue.
 
-ISSUE: {issue.get('title')}
-DESCRIPTION: {issue.get('body', '')[:2000]}
+    **Task Type:** {task_type}
+    **Issue Title:** {issue.get('title')}
+    **Issue Description:**
+    {issue.get('body', '')[:2000]}
 
-AVAILABLE FILES: {available_files[:20]}
+    **Available Files:**
+    {available_files}
 
-Identify 1-2 key files to modify. Respond with JSON:
+    **Instructions:**
+    1.  **Analyze the Goal:** Carefully understand the user's request in the issue.
+    2.  **Identify Key Files:** From the available files, identify the 1-3 most relevant files to modify.
+    3.  **Formulate a Plan:** Create a clear, logical sequence of steps to implement the solution. The steps should be specific and actionable.
+    4.  **Think Step-by-Step:** Explain your reasoning for choosing these files and steps.
 
-{{
-  "files": [
+    **Output Format:**
+    Respond with a clean JSON object. Do not include any markdown formatting or other text outside the JSON.
+
+    ```json
     {{
-      "path": "file1.py",
-      "change_type": "REWRITE|APPEND", 
-      "reason": "Why modify this file"
+      "reasoning": "A brief explanation of why you chose these files and this approach.",
+      "files": [
+        {{
+          "path": "path/to/file1.py",
+          "change_type": "REWRITE",
+          "reason": "Explain why this specific file needs to be rewritten to solve the issue."
+        }},
+        {{
+          "path": "path/to/file2.js",
+          "change_type": "APPEND",
+          "reason": "Explain what new functionality needs to be appended to this file and why."
+        }}
+      ],
+      "steps": [
+        "First, I will modify the `User` class in `file1.py` to include a new `email` field.",
+        "Next, I will add a new validation function to `file2.js` to ensure the email format is correct.",
+        "Finally, I will update the documentation to reflect these changes."
+      ]
     }}
-  ],
-  "steps": ["Step 1", "Step 2"]
-}}"""
+    ```
+    """
 
     try:
         response = call_gemini_with_limits(model_flash, planner_prompt, "flash")
@@ -430,37 +484,41 @@ Identify 1-2 key files to modify. Respond with JSON:
         return None
 
 def implement_changes(plan: Dict, repo_context: Dict) -> Dict:
-    """Implement changes"""
+    """Implement changes based on the plan."""
     print("\n--- ⚙️ Implementation ---")
     
     implementations = {}
     
     for file_plan in plan["files"]:
         file_path = file_plan["path"]
-        change_type = file_plan["change_type"]
+        change_type = file_plan.get("change_type", "REWRITE")
         
         print(f"🛠️ Implementing: {file_path}")
         
-        original_content = repo_context["files"][file_path]
+        original_content = repo_context["files"].get(file_path, "")
         
-        if change_type == "APPEND":
-            prompt = f"""Add content to this file:
+        prompt = f"""
+        You are an expert software engineer. Your task is to write clean, professional code to implement a planned change for a file.
 
-FILE: {file_path}
-PLAN: {json.dumps(plan, indent=2)}
-EXISTING CONTENT:
-{original_content[:8000]}
+        **File to Modify:** `{file_path}`
+        **Implementation Plan:**
+        ```json
+        {json.dumps(plan, indent=2)}
+        ```
 
-Provide ONLY the new content to append:"""
-        else:
-            prompt = f"""Rewrite this file:
+        **Original File Content:**
+        ```
+        {original_content[:12000]}
+        ```
 
-FILE: {file_path}  
-PLAN: {json.dumps(plan, indent=2)}
-ORIGINAL CONTENT:
-{original_content[:12000]}
+        **Instructions:**
+        1.  **Follow the Plan:** Adhere strictly to the steps outlined in the implementation plan.
+        2.  **Write High-Quality Code:** Produce clean, well-commented, and efficient code.
+        3.  **Maintain Existing Style:** Match the coding style and conventions of the original file.
+        4.  **Provide Only Code:** Your response should contain *only* the raw code for the new file content (for 'REWRITE') or the code to be added (for 'APPEND'). Do not include any explanations, markdown formatting, or introductory text.
 
-Provide the COMPLETE rewritten file:"""
+        **Your Response:**
+        """
 
         try:
             response = call_gemini_with_limits(model_flash, prompt, "flash")
@@ -475,60 +533,70 @@ Provide the COMPLETE rewritten file:"""
     
     return implementations
 
-def critique_changes(plan: Dict, implementations: Dict, repo_context: Dict) -> Dict:
-    """Critique changes"""
-    print("\n--- 🧐 Critique ---")
+def critique_and_refine(plan: Dict, implementations: Dict, repo_context: Dict) -> Dict:
+    """Critique and refine the implemented changes, returning a structured review."""
+    print("\n--- 🧐 Critique & Refine ---")
     
-    refined = {}
+    reviews = {}
     
     for file_path, implementation in implementations.items():
-        original_content = repo_context["files"][file_path]
-        change_type = implementation["change_type"]
+        original_content = repo_context["files"].get(file_path, "")
         draft_content = implementation["content"]
         
-        if change_type == "APPEND":
-            prompt = f"""Refine text to append:
+        prompt = f"""
+        You are a senior software engineer reviewing a code change.
 
-FILE: {file_path}
-PLAN: {json.dumps(plan, indent=2)}
-ORIGINAL CONTENT (context):
-{original_content[:4000]}
-TEXT TO APPEND:
-{draft_content}
+        **File:** `{file_path}`
+        **Plan:** {json.dumps(plan['steps'], indent=2)}
+        **Original Code:**
+        ```
+        {original_content[:6000]}
+        ```
+        **Proposed Code:**
+        ```
+        {draft_content[:8000]}
+        ```
 
-Provide ONLY the refined text:"""
-        else:
-            prompt = f"""Refine this code:
+        **Instructions:**
+        1.  **Review:** Critique the proposed code for correctness, bugs, style, and adherence to the plan.
+        2.  **Decide:** If the code is perfect, set `requires_re_implementation` to `false`. If it has significant flaws that need a rewrite, set it to `true`.
+        3.  **Refine:** Rewrite the code to fix all identified issues.
 
-FILE: {file_path}
-PLAN: {json.dumps(plan, indent=2)}
-ORIGINAL CONTENT:
-{original_content[:8000]}
-NEW CODE:
-{draft_content[:10000]}
-
-Provide ONLY the complete refined code:"""
+        **Output:** Respond *only* with a JSON object in the following format:
+        ```json
+        {{
+          "requires_re_implementation": boolean,
+          "review_summary": "Your brief critique of the code.",
+          "refined_code": "The complete, corrected code."
+        }}
+        ```
+        """
 
         try:
-            response = call_gemini_with_limits(model_pro, prompt, "pro")
+            response_text = call_gemini_with_limits(model_pro, prompt, "pro")
             
-            # Clean response
-            refined_content = response.strip()
-            code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", refined_content, re.DOTALL)
-            if code_blocks:
-                refined_content = code_blocks[-1].strip()
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                review = json.loads(json_match.group())
+                # Ensure refined code is clean
+                code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", review.get("refined_code", ""), re.DOTALL)
+                if code_blocks:
+                    review["refined_code"] = code_blocks[-1].strip()
                 
-            refined[file_path] = {
-                "content": refined_content,
-                "change_type": change_type
-            }
-            print(f"✅ Refined: {file_path}")
-            
+                reviews[file_path] = review
+                print(f"✅ Reviewed: {file_path}")
+            else:
+                raise ValueError("No JSON object found in critique response.")
+
         except Exception as e:
-            print(f"❌ Critique failed: {file_path} - {e}")
-            refined[file_path] = implementation  # Use original
-    
-    return refined
+            print(f"❌ Critique failed for {file_path}: {e}")
+            reviews[file_path] = {
+                "requires_re_implementation": False,
+                "review_summary": "Critique failed, using original implementation.",
+                "refined_code": draft_content
+            }
+            
+    return reviews
 
 def apply_changes(temp_dir: str, implementations: Dict):
     """Apply changes to files"""
@@ -571,7 +639,7 @@ def validate_changes(temp_dir: str, implementations: Dict) -> bool:
                 json.loads(content)
         except Exception as e:
             print(f"⚠️ Validation warning for {file_path}: {e}")
-            # Don't fail on validation warnings
+            return False
     
     print("✅ Changes validated")
     return True
@@ -624,7 +692,10 @@ def process_issue(issue):
         return
     
     # Analyze repo
-    repo_context = get_repo_context(temp_dir)
+    repo_structure = get_repo_structure(temp_dir)
+    relevant_files = select_relevant_files(issue, repo_structure)
+    repo_context = get_repo_context(temp_dir, relevant_files)
+
     if not repo_context["files"]:
         print("❌ No files to work with")
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -641,14 +712,37 @@ def process_issue(issue):
         print("❌ No implementations generated")
         shutil.rmtree(temp_dir, ignore_errors=True)
         return
+
+    reviews = critique_and_refine(plan, implementations, repo_context)
     
-    refined_implementations = critique_changes(plan, implementations, repo_context)
+    # Check if any file needs re-implementation
+    needs_re_implementation = any(r.get("requires_re_implementation") for r in reviews.values())
     
+    if needs_re_implementation:
+        print("\n--- 🔄 Re-implementing based on feedback ---")
+        # Update context with feedback for the next attempt
+        feedback_context = {f: r["review_summary"] for f, r in reviews.items()}
+
+        # Create a new plan or modify the old one with feedback
+        plan["feedback"] = feedback_context
+
+        implementations = implement_changes(plan, repo_context)
+        reviews = critique_and_refine(plan, implementations, repo_context)
+
+    # Final implementation from refined code
+    final_implementations = {}
+    for file_path, review in reviews.items():
+        change_type = next((f["change_type"] for f in plan["files"] if f["path"] == file_path), "REWRITE")
+        final_implementations[file_path] = {
+            "content": review["refined_code"],
+            "change_type": change_type
+        }
+
     # Apply changes
-    apply_changes(temp_dir, refined_implementations)
+    apply_changes(temp_dir, final_implementations)
     
     # Validate
-    if not validate_changes(temp_dir, refined_implementations):
+    if not validate_changes(temp_dir, final_implementations):
         print("❌ Validation failed")
         shutil.rmtree(temp_dir, ignore_errors=True)
         return
